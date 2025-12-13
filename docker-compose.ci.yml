@@ -1,0 +1,24 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kubsu
+      POSTGRES_PASSWORD: kubsu
+      POSTGRES_DB: kubsu
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kubsu -d kubsu"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      target: test
+    environment:
+      DATABASE_URL: postgresql+psycopg://kubsu:kubsu@db:5432/kubsu
+      ROOT_PATH: ""
+      PORT: "8008"
+    depends_on:
+      db:
+        condition: service_healthy

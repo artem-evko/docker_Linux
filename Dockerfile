@@ -23,7 +23,8 @@ RUN python -m pip install --no-index --find-links=/wheels KubSU && rm -rf /wheel
 
 COPY src ./src
 
-ENV PORT=8008 \
+ENV PYTHONPATH=/app \
+    PORT=8008 \
     ROOT_PATH=""
 EXPOSE 8008
 

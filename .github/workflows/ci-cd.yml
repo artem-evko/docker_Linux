@@ -34,12 +34,14 @@ jobs:
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
           source: |
+            .dockerignore
             Dockerfile
             pyproject.toml
             docker-compose.ci.yml
             src/**
           target: /home/${{ secrets.SSH_USER }}/deploy
           overwrite: true
+          debug: true
 
       - name: Build & deploy with podman (rootless)
         uses: appleboy/ssh-action@v1.2.0

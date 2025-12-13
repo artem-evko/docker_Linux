@@ -1,3 +1,77 @@
+  GNU nano 7.2                                                                                                                                                            .github/workflows/ci-cd.yml
+name: CI/CD
+
+on:
+  push:
+    branches: ["master"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Run tests in built image (with services)"
+        run: docker compose -f tasks/docker/docker-compose.ci.yml up --build --abort-on-container-exit --exit-code-from app
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Debug: list repo files"
+        run: |
+          pwd
+          ls -la
+          find . -maxdepth 4 -type f | sort
+
+      - name: "Copy app sources to server"
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: |
+            tasks/docker/Dockerfile
+            tasks/docker/pyproject.toml
+            tasks/docker/src/**
+          target: /home/${{ secrets.SSH_USER }}/deploy
+          strip_components: 2
+          overwrite: true
+
+      - name: "Build & deploy with podman (rootless)"
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            cd ~/deploy
+
+            podman build --target prod -t usersapp:latest .
+
+            podman network create usersnet || true
+
+            podman rm -f usersdb 2>/dev/null || true
+            podman run -d --name usersdb --network usersnet \
+              -e POSTGRES_USER=kubsu \
+              -e POSTGRES_PASSWORD=kubsu \
+              -e POSTGRES_DB=kubsu \
+              docker.io/library/postgres:16-alpine
+
+            podman rm -f usersapp 2>/dev/null || true
+            podman run -d --name usersapp --network usersnet \
+              -e DATABASE_URL="postgresql+psycopg://kubsu:kubsu@usersdb:5432/kubsu" \
+              -e PORT=${{ secrets.APP_PORT }} \
+              -e ROOT_PATH="/${{ secrets.USERNAME }}" \
+              -p ${{ secrets.APP_PORT }}:${{ secrets.APP_PORT }} \
+              usersapp:latest
+
+            podman ps
 name: CI/CD
 
 on:

@@ -33,8 +33,12 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           port: ${{ secrets.SSH_PORT }}
-          source: "Dockerfile,pyproject.toml,src/**,docker-compose.ci.yml"
-          target: "/home/${{ secrets.SSH_USER }}/deploy"
+          source: |
+            Dockerfile
+            pyproject.toml
+            docker-compose.ci.yml
+            src/**
+          target: /home/${{ secrets.SSH_USER }}/deploy
           overwrite: true
 
       - name: Build & deploy with podman (rootless)

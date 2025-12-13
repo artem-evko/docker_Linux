@@ -1,0 +1,77 @@
+name: CI/CD
+
+on:
+  push:
+    branches: ["master"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Тесты запускаются В СОБРАННОМ ОБРАЗЕ + с подключенным Postgres (docker-compose.ci.yml)
+      - name: Run tests in built image (with services)
+        run: docker compose -f docker-compose.ci.yml up --build --abort-on-container-exit --exit-code-from app
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build prod image and pack to tar
+        run: |
+          docker build --target prod -t usersapp:latest .
+          docker save usersapp:latest -o image.tar
+
+      - name: Copy image.tar to server
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          source: "image.tar"
+          target: "/home/${{ secrets.SSH_USER }}/deploy"
+
+      - name: Deploy with podman (rootless)
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT }}
+          script: |
+            set -e
+            mkdir -p ~/deploy
+            cd ~/deploy
+
+            podman network create usersnet || true
+
+            # load image
+            OUT="$(podman load -i image.tar || true)"
+            echo "$OUT"
+
+            # try to get loaded image name, fallback to usersapp:latest
+            LOADED="$(echo "$OUT" | awk -F': ' '/Loaded image/ {print $2}' | head -n1)"
+            IMAGE_TAG="${LOADED:-usersapp:latest}"
+
+            # db (без проброса 5432 наружу, чтобы не ловить конфликт)
+            podman rm -f usersdb 2>/dev/null || true
+            podman run -d --name usersdb --network usersnet \
+              -e POSTGRES_USER=kubsu \
+              -e POSTGRES_PASSWORD=kubsu \
+              -e POSTGRES_DB=kubsu \
+              docker.io/library/postgres:16-alpine
+
+            # app
+            podman rm -f usersapp 2>/dev/null || true
+            podman run -d --name usersapp --network usersnet \
+              -e DATABASE_URL="postgresql+psycopg://kubsu:kubsu@usersdb:5432/kubsu" \
+              -e PORT=${{ secrets.APP_PORT }} \
+              -e ROOT_PATH="/${{ secrets.USERNAME }}" \
+              -p ${{ secrets.APP_PORT }}:${{ secrets.APP_PORT }} \
+              "$IMAGE_TAG"
+
+            podman ps

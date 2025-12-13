@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Run tests in built image (with services)
+      - name: "Run tests in built image (with services)"
         run: docker compose -f tasks/docker/docker-compose.ci.yml up --build --abort-on-container-exit --exit-code-from app
 
   deploy:
@@ -19,13 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Debug: list repo files
+      - name: "Debug: list repo files"
         run: |
           pwd
           ls -la
           find . -maxdepth 4 -type f | sort
 
-      - name: Copy app sources to server
+      - name: "Copy app sources to server"
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.SSH_HOST }}
@@ -40,7 +40,7 @@ jobs:
           strip_components: 2
           overwrite: true
 
-      - name: Build & deploy with podman (rootless)
+      - name: "Build & deploy with podman (rootless)"
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.SSH_HOST }}

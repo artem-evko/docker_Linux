@@ -6,11 +6,9 @@ from sqlalchemy.future import select
 from src import models, schemas
 from src.database import init_db, get_db
 
-app = FastAPI()
+ROOT_PATH = os.getenv("ROOT_PATH", "").rstrip("/")
 
-PREFIX = os.getenv("ROOT_PATH", "").rstrip("/")
-# если ROOT_PATH пустой -> PREFIX = ""
-# если ROOT_PATH="/banzai" -> PREFIX="/banzai"
+app = FastAPI(root_path=ROOT_PATH)
 
 
 @app.on_event("startup")
@@ -18,7 +16,7 @@ async def startup():
     await init_db()
 
 
-@app.post(f"{PREFIX}/users/", response_model=schemas.User)
+@app.post("/users/", response_model=schemas.User)
 async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
     user = models.User(name=user.name)
     db.add(user)
@@ -27,13 +25,13 @@ async def create_user(user: schemas.UserCreate, db: AsyncSession = Depends(get_d
     return user
 
 
-@app.get(f"{PREFIX}/users/", response_model=list[schemas.User])
+@app.get("/users/", response_model=list[schemas.User])
 async def read_users(skip: int = 0, limit: int = 10, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.User).offset(skip).limit(limit))
     return result.scalars().all()
 
 
-@app.get(f"{PREFIX}/users/{{user_id}}", response_model=schemas.User)
+@app.get("/users/{user_id}", response_model=schemas.User)
 async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     user = result.scalar_one_or_none()
@@ -42,7 +40,7 @@ async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@app.patch(f"{PREFIX}/users/{{user_id}}", response_model=schemas.User)
+@app.patch("/users/{user_id}", response_model=schemas.User)
 async def update_user(user_id: int, user: schemas.UserCreate, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     db_user = result.scalar_one_or_none()
@@ -50,10 +48,11 @@ async def update_user(user_id: int, user: schemas.UserCreate, db: AsyncSession =
         raise HTTPException(status_code=404, detail="User not found")
     db_user.name = user.name
     await db.commit()
+    await db.refresh(db_user)
     return db_user
 
 
-@app.delete(f"{PREFIX}/users/{{user_id}}", response_model=dict)
+@app.delete("/users/{user_id}", response_model=dict)
 async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(models.User).where(models.User.id == user_id))
     db_user = result.scalar_one_or_none()

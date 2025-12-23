@@ -2,8 +2,7 @@ name: CI/CD
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
 
 permissions:
   contents: read
@@ -13,74 +12,78 @@ env:
   IMAGE: ghcr.io/${{ github.repository_owner }}/docker_linux
 
 jobs:
-  test:
-    runs-on: self-hosted
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Run tests (podman-compose)
-        run: |
-          set -e
-          podman-compose -f docker-compose.ci.yml up --build --abort-on-container-exit --exit-code-from app
-        # чтобы не оставлять контейнеры после тестов
-      - name: Cleanup (podman-compose)
-        if: always()
-        run: |
-          podman-compose -f docker-compose.ci.yml down -v || true
-
   build:
-    runs-on: self-hosted
-    needs: test
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Login to GHCR (podman)
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Build image (podman)
+      - name: Build & push PROD image
         run: |
           set -e
-          podman build --target prod \
-            -t "${IMAGE}:latest" \
-            -t "${IMAGE}:${{ github.sha }}" \
-            .
+          docker build --target prod -t "${IMAGE}:${{ github.sha }}" .
+          docker push "${IMAGE}:${{ github.sha }}"
 
-      - name: Push image to GHCR (podman)
+      - name: Build & push TEST image
         run: |
           set -e
-          podman push "${IMAGE}:latest"
-          podman push "${IMAGE}:${{ github.sha }}"
+          docker build --target test -t "${IMAGE}:test-${{ github.sha }}" .
+          docker push "${IMAGE}:test-${{ github.sha }}"
+
+  test:
+    runs-on: ubuntu-latest
+    needs: build
+
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: kubsu
+          POSTGRES_PASSWORD: kubsu
+          POSTGRES_DB: kubsu
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U kubsu -d kubsu"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 30
+
+    steps:
+      - name: Login to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Pull TEST image
+        run: docker pull "${IMAGE}:test-${{ github.sha }}"
+
+      - name: Run tests inside built image
+        run: |
+          set -e
+          docker run --rm --network host \
+            -e DATABASE_URL="postgresql+psycopg://kubsu:kubsu@127.0.0.1:5432/kubsu" \
+            -e ROOT_PATH="" \
+            "${IMAGE}:test-${{ github.sha }}"
 
   deploy:
     runs-on: self-hosted
-    needs: build
+    needs: test
     steps:
       - name: Login to GHCR (podman)
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | podman login ghcr.io -u "${{ github.actor }}" --password-stdin
 
-      - name: Pull & run containers (podman)
+      - name: Pull & run app (uses server Postgres)
         run: |
           set -e
-
-          podman pull "${IMAGE}:latest"
-
-          podman network create usersnet || true
-
-          podman rm -f usersdb 2>/dev/null || true
-          podman run -d --name usersdb --network usersnet \
-            -e POSTGRES_USER=kubsu \
-            -e POSTGRES_PASSWORD=kubsu \
-            -e POSTGRES_DB=kubsu \
-            docker.io/library/postgres:16-alpine
+          podman pull "${IMAGE}:${{ github.sha }}"
 
           podman rm -f usersapp 2>/dev/null || true
-          podman run -d --name usersapp --network usersnet \
-            -e DATABASE_URL="postgresql+psycopg://kubsu:kubsu@usersdb:5432/kubsu" \
-            -e PORT=${{ secrets.APP_PORT }} \
+
+          # контейнер слушает 8008, на хосте открываем порт из секрета
+          podman run -d --name usersapp --network host \
+            -e DATABASE_URL="postgresql+psycopg://kubsu:kubsu@127.0.0.1:5432/kubsu" \
             -e ROOT_PATH="/${{ secrets.USERNAME }}" \
-            -p ${{ secrets.APP_PORT }}:${{ secrets.APP_PORT }} \
-            "${IMAGE}:latest"
+            "${IMAGE}:${{ github.sha }}"
 
           podman ps

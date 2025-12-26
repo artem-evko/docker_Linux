@@ -8,7 +8,7 @@ WORKDIR /app
 
 # ---------- build stage ----------
 FROM base AS builder
-# wheel иногда не установлен в slim, поставим (без upgrade)
+
 RUN python -m pip install --no-cache-dir wheel
 
 COPY pyproject.toml ./
